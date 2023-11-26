@@ -1,53 +1,25 @@
-# ComfyUI-Saveaswebp
-Save a picture as Webp file in Comfy + Workflow loading
+# ComfyUI-SaveSRS 
 
-## Warning: 
+![ComfyUI SaveSRS node, how to use!](Screenshot.png "ComfyUI SaveSRS node")
 
-I'm a novice at best at coding and some of the code is pretty hacky, so this can definitely break.
+Save a same picture with multiple representations. ".srs" file format is a part of [ACLMMP](https://github.com/mfg637/ACLMMP) project.
 
-Also, Webp only supports files up to 16383 x 16383.
+This is a fork from [ComfyUI-Saveaswebp](https://github.com/Kaharos94/ComfyUI-Saveaswebp).
+Thank you, Kaharos94.
 
-### Known issues:
+Currently, this node generates 2 variants of image: avif for upscale image and webp for small sized images.
 
-Import of Webpfiles breaks if import a workflow that has }Prompt:{ in a Node that has dynamic wildcards disabled.
+Actual code for save webp files almost the same as in original node. It even saves metadata in webp.
 
+But not in avif. Instead, metadata stored in .srs files, as well as workflow loading.
 
-Node doesn't resize on Save - image is in there, just needs to be resized to be visible.
+Lossless mode was removed. If you need lossless, save as PNG or install Saveaswebp node instead.
 
-## Description:
+## System requirements
 
-This adds a custom node to save a picture as a Webp File and also adds a script to Comfy to drag and drop generated webpfiles into the UI to load the workflow.
-
-I've added a compression slider and a lossy/lossless option. The compression slider is a bit misleading.
-
-In lossless mode, it only affects the "effort" taken to compress where 100 is the smallest possible size and 1 is the biggest possible size, it's a tradeoff for saving speed.
-
-In lossy mode, that's the other way around, where 100 is the biggest possible size with the least compression and 1 is the smallest possible size with maximum compression. 
-
-On default it's set to lossy with a compression of 80, below are examples for that.
-
- 
+This node requires the [libavif](https://github.com/AOMediaCodec/libavif) tools to be installed in your system.
 
 ## Installation: 
 
-Use git clone https://github.com/Kaharos94/ComfyUI-Saveaswebp in your ComfyUI custom nodes directory
-
-## Examples: 
-
-Lossless with compression set to 100, 17069KB
-https://postimg.cc/2bPkkFN9
-
-Lossless with compression set to 10, 17059KB
-https://postimg.cc/bZTwxt1d
-
-
-Lossy with compression set to 100 , 5384 KB
-https://postimg.cc/WFDpcYCJ
-
-
-Lossy with compression set to 10, 174 KB
-https://postimg.cc/VSkLDkFg
-
-
-Lossy with compression set to 80 ( Default ) , 935 KB
-https://postimg.cc/3yfr6QST
+1. Properly install libavif with tools/apps (node uses only avifenc).
+2. Use git clone https://github.com/mfg637/ComfyUI-SaveSRS.git in your ComfyUI custom nodes directory.
