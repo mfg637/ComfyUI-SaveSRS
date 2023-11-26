@@ -30,6 +30,8 @@ app.registerExtension(
 					}).catch(function (error){
 						console.log("SRS loading error:", error.message)
 					})
+				} else {
+					return handleFile.apply(this, arguments);
 				}
 			}
 		},
