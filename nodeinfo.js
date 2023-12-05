@@ -26,9 +26,14 @@ app.registerExtension(
 			app.handleFile = async function(file) {
 				if (file.type === ""){
 					read_srs(file).then(function (result){
-						app.loadGraphData(result.content.extra_pnginfo.workflow);
+						if( app.load_workflow_with_components ) {
+							app.load_workflow_with_components(result.content.extra_pnginfo.workflow);
+						} else {
+							app.loadGraphData(result.content.extra_pnginfo.workflow);
+						}
 					}).catch(function (error){
 						console.log("SRS loading error:", error.message)
+						return handleFile.apply(this, arguments);
 					})
 				} else {
 					return handleFile.apply(this, arguments);

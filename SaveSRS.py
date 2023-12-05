@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 from PIL import Image
 import folder_paths
@@ -13,6 +15,9 @@ import io
 # comfyUI node to save an image in webp format
 
 # fork by mfg637
+
+CL3_SIZE_LIMIT = 2048
+CL2_SIZE_LIMIT = 4096
 
 class SaveSRS:
     def __init__(self):
@@ -88,8 +93,7 @@ class SaveSRS:
             del intermediate_image
             return img
 
-        def save_webp(image, file_name):
-            img = convert_tensor_image_to_pil(image)
+        def save_webp(img, file_name):
             workflowmetadata = str()
             promptstr = str()
             imgexif = img.getexif()  # get the (empty) Exif data of the generated Picture
@@ -118,11 +122,7 @@ class SaveSRS:
             })
             return pathlib.Path(file)
 
-        def save_avif(image, file_name: pathlib.Path, crf):
-            compatibility_level = "2"
-            if image.shape[0] > 4096 or image.shape[1] > 4096:
-                compatibility_level = "1"
-
+        def save_avif(img, file_name: pathlib.Path, crf, _subsampling=subsampling, cl2_suffix = False):
             commandline = ['avifenc', '-j', 'all', "--speed", str(avif_cpu_used)]
 
             commandline += [
@@ -133,8 +133,8 @@ class SaveSRS:
                 '-a', 'cq-level={}'.format(crf)
             ]
 
-            if subsampling != "auto":
-                commandline += ['--yuv', subsampling]
+            if _subsampling != "auto":
+                commandline += ['--yuv', _subsampling]
             # if avif_enable_advanced_options:
             #     commandline += [
             #         '-a', 'aq-mode=1',
@@ -142,8 +142,9 @@ class SaveSRS:
             #     ]
 
             output_file_name = file_name.with_suffix(".avif")
+            if cl2_suffix:
+                output_file_name = output_file_name.with_stem(output_file_name.stem + "cl2")
 
-            img = convert_tensor_image_to_pil(image)
             src_tmp_file = tempfile.NamedTemporaryFile(mode='wb', suffix=".png", delete=True)
             img.save(src_tmp_file, format="PNG", compress_level=0)
             src_tmp_file_name = src_tmp_file.name
@@ -156,9 +157,9 @@ class SaveSRS:
             subprocess.run(commandline)
             src_tmp_file.close()
 
-            return output_file_name, compatibility_level
+            return output_file_name
 
-        def save_srs_file(webp_file, avif_file, avif_level, file_name: pathlib.Path):
+        def save_srs_file(cl3_level_path, cl2_level_path, cl1_level_path: None | pathlib.Path, file_name: pathlib.Path):
             srs_data = {
                 "ftype": "CLSRS",
                 "content": {
@@ -170,8 +171,10 @@ class SaveSRS:
                     "image": {"levels": dict()}
                 }
             }
-            srs_data["streams"]["image"]["levels"]["3"] = str(webp_file)
-            srs_data["streams"]["image"]["levels"][avif_level] = str(avif_file)
+            srs_data["streams"]["image"]["levels"]["3"] = str(cl3_level_path)
+            srs_data["streams"]["image"]["levels"]["2"] = str(cl2_level_path)
+            if cl1_file_path is not None:
+                srs_data["streams"]["image"]["levels"]["1"] = str(cl1_level_path)
 
             file_name = file_name.with_suffix(".srs")
             print("srs file name", file_name)
@@ -183,12 +186,77 @@ class SaveSRS:
 
         for image in images:
             file_name = f"{_filename_prefix}_{counter:05}_"
-            webp_file_path = save_webp(image[0], file_name)
+            thumbnail_image: Image.Image = convert_tensor_image_to_pil(image[0])
+            is_thumbnail_cl3: bool = \
+                thumbnail_image.width <= CL3_SIZE_LIMIT and thumbnail_image.height <= CL3_SIZE_LIMIT
+            is_thumbnail_cl2: bool = \
+                thumbnail_image.width <= CL2_SIZE_LIMIT and thumbnail_image.height <= CL2_SIZE_LIMIT
+            cl2_image = None
+            cl3_image = None
+            cl1_image = None
+            # cl0_image = None
+            if is_thumbnail_cl3:
+                cl3_image = thumbnail_image
+            elif is_thumbnail_cl2:
+                cl3_image = thumbnail_image.copy()
+                cl3_image.thumbnail((CL3_SIZE_LIMIT, CL3_SIZE_LIMIT), Image.Resampling.LANCZOS)
+                cl2_image = thumbnail_image
+            else:
+                cl1_image = thumbnail_image
+                cl2_image = thumbnail_image.copy()
+                cl2_image.thumbnail((CL2_SIZE_LIMIT, CL2_SIZE_LIMIT), Image.Resampling.LANCZOS)
+                cl3_image = thumbnail_image.copy()
+                cl3_image.thumbnail((CL3_SIZE_LIMIT, CL3_SIZE_LIMIT), Image.Resampling.LANCZOS)
+                # CL0 level is disabled, due to risk of DecompressionBombError
+                # cl0_image = convert_tensor_image_to_pil(image[1])
+            cl3_file_path = save_webp(cl3_image, file_name)
             crf = 100 - compression
-            avif_file_path, compatibility_level = save_avif(image[1], sub_folder.joinpath(file_name), crf)
-            avif_relative_file_path = avif_file_path.relative_to(full_output_folder)
+            if cl2_image is None:
+                upscale_image: Image.Image = convert_tensor_image_to_pil(image[1])
+                is_upscale_cl2: bool = \
+                    upscale_image.width <= CL2_SIZE_LIMIT and upscale_image.height <= CL2_SIZE_LIMIT
+                if is_upscale_cl2:
+                    cl2_image = upscale_image
+                else:
+                    cl1_image = upscale_image
+                    scale_factor = min(cl1_image.width / cl3_image.width, cl1_image.height / cl3_image.height)
+                    if scale_factor <= 1:
+                        raise ValueError("Upscale image must be bigger than thumbnail image")
+                    cl2_scale_factor = None
+                    if scale_factor >= 4:
+                        cl2_scale_factor = math.floor(scale_factor) / 2
+                    else:
+                        fraction = 1 / scale_factor
+                        cl2_scale_factor = (1 - fraction) / 2 + fraction
+                    cl2_image = cl1_image.copy()
+                    if cl2_scale_factor > 1:
+                        cl2_image.thumbnail(
+                            (round(cl1_image.width / cl2_scale_factor), round(cl1_image.height / cl2_scale_factor)),
+                            Image.Resampling.LANCZOS
+                        )
+                    else:
+                        cl2_image.thumbnail(
+                            (round(cl1_image.width * cl2_scale_factor), round(cl1_image.height * cl2_scale_factor)),
+                            Image.Resampling.LANCZOS
+                        )
+
+            elif cl1_image is None:
+                cl1_image = convert_tensor_image_to_pil(image[1])
+            cl1_file_path = None
+            if cl1_image is not None:
+                cl1_file_path = save_avif(cl1_image, sub_folder.joinpath(file_name), crf)
+                cl2_subsampling = subsampling
+                if subsampling == "auto":
+                    cl2_subsampling = "420"
+                cl2_file_path = save_avif(cl2_image, sub_folder.joinpath(file_name), crf, cl2_subsampling, True)
+            else:
+                cl2_file_path = save_avif(cl2_image, sub_folder.joinpath(file_name), crf)
+            cl2_relative_file_path = cl2_file_path.relative_to(full_output_folder)
+            cl1_relative_file_path = None
+            if cl1_file_path is not None:
+                cl1_relative_file_path = cl1_file_path.relative_to(full_output_folder)
             save_srs_file(
-                webp_file_path, avif_relative_file_path, compatibility_level, full_output_folder.joinpath(file_name)
+                cl3_file_path, cl2_relative_file_path, cl1_relative_file_path, full_output_folder.joinpath(file_name)
             )
             counter += 1
 
